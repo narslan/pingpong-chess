@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
-	"time"
+	_ "time"
 
 	"github.com/narslan/uci"
 	"github.com/notnil/chess"
@@ -16,36 +16,34 @@ var resultOpts = uci.HighestDepthOnly | uci.IncludeUpperbounds | uci.IncludeLowe
 
 func init() {
 	var err error
+
 	engW, err = uci.NewEngine("./engines/stockfish")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	engB, err = uci.NewEngine("./engines/ethereal")
+	engB, err = uci.NewEngine("./engines/ethereal_nnue")
 	if err != nil {
 		log.Fatal(err)
 	}
+	optW := map[string]interface{}{
+		"MultiPV":  4,
+		"Threads":  4,
+		"EvalFile": "/home/nevroz/go/src/github.com/narslan/pingpong-chess/engines/nn-82215d0fd0df.nnue",
+	}
+	optB := map[string]interface{}{
+		"MultiPV":  4,
+		"Threads":  4,
+		"EvalFile": "/home/nevroz/go/src/github.com/narslan/pingpong-chess/engines/nn-82215d0fd0df.nnue",
+	}
 
 	// set some engine options
-	engW.SetOptions(uci.Options{
-		Hash:    128,
-		Ponder:  true,
-		OwnBook: true,
-		MultiPV: 1,
-		Threads: 4,
-	})
-
-	engB.SetOptions(uci.Options{
-		Hash:    128,
-		Ponder:  true,
-		OwnBook: true,
-		MultiPV: 1,
-		Threads: 4,
-	})
+	engW.SetOptions(optW)
+	engB.SetOptions(optB)
 }
 
 // The pinger prints a ping and waits for a pong
-func wplay(white <-chan *chess.Game, black chan<- *chess.Game) {
+func wplay(white <-chan *chess.Game, black chan<- *chess.Game, done chan bool) {
 	for {
 		g := <-white
 
@@ -54,15 +52,16 @@ func wplay(white <-chan *chess.Game, black chan<- *chess.Game) {
 
 		if err := g.MoveStr(bm); err != nil {
 			log.Printf("illegal move: %s\n", err.Error())
+			done <- true
 		}
 		fmt.Println(g.Position().Board().Draw())
-		time.Sleep(time.Second)
+		//time.Sleep(1 * time.Second)
 		black <- g
 	}
 }
 
 // The ponger prints a pong and waits for a ping
-func bplay(white chan<- *chess.Game, black <-chan *chess.Game) {
+func bplay(white chan<- *chess.Game, black <-chan *chess.Game, done chan bool) {
 	for {
 		g := <-black
 
@@ -71,9 +70,10 @@ func bplay(white chan<- *chess.Game, black <-chan *chess.Game) {
 
 		if err := g.MoveStr(bm); err != nil {
 			log.Printf("illegal move: %s\n", err.Error())
+			done <- true
 		}
 		fmt.Println(g.Position().Board().Draw())
-		time.Sleep(time.Second)
+		//time.Sleep(1 * time.Second)
 		white <- g
 	}
 }
@@ -81,16 +81,21 @@ func bplay(white chan<- *chess.Game, black <-chan *chess.Game) {
 func main() {
 	w := make(chan *chess.Game)
 	b := make(chan *chess.Game)
+	done := make(chan bool, 1)
 
-	go wplay(w, b)
-	go bplay(w, b)
+	go wplay(w, b, done)
+	go bplay(w, b, done)
 	fen := "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 	g := startGame(fen)
 	// The main goroutine starts the ping/pong by sending into the ping channel
 	w <- g
 	for {
 		// Block the main thread until an interrupt
-		time.Sleep(time.Second)
+		if <-done {
+			break
+		}
+
+		//time.Sleep(time.Second)
 	}
 }
 
@@ -108,7 +113,7 @@ func startGame(fens string) *chess.Game {
 func bestMoveWhite(fens string) string {
 	engW.SetFEN(fens)
 
-	results, err := engW.GoDepth(10, resultOpts)
+	results, err := engW.GoDepth(20, resultOpts)
 	if err != nil {
 		fmt.Println(err.Error())
 	}
@@ -118,7 +123,7 @@ func bestMoveWhite(fens string) string {
 func bestMoveBlack(fens string) string {
 	engB.SetFEN(fens)
 
-	results, err := engB.GoDepth(10, resultOpts)
+	results, err := engB.GoDepth(20, resultOpts)
 	if err != nil {
 		fmt.Println(err.Error())
 	}
